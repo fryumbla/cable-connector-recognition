@@ -1,0 +1,194 @@
+#!/usr/bin/env python
+
+"""
+ON THE RASPI: roslaunch cable_contour camera.launch 
+
+   0------------------> x (cols) Image Frame
+   |
+   |        c    Camera frame
+   |         o---> x
+   |         |
+   |         V y
+   |
+   V y (rows)
+
+
+SUBSCRIBES TO:
+    /camera/color/image_raw: Source image topic
+    
+PUBLISHES TO:
+    /connector/image_cable_connector : image with detected connector and search window
+    /cable/image_mask : masking    
+    /connector/position_connector : connector position in adimensional values wrt. camera frame
+
+"""
+
+#--- Allow relative importing
+if __name__ == '__main__' and __package__ is None:
+    from os import sys, path
+    sys.path.append(path.dirname(path.dirname(path.abspath(__file__))))
+    
+import sys
+import rospy
+import cv2
+import time
+
+from std_msgs.msg           import String
+from sensor_msgs.msg        import Image
+from geometry_msgs.msg      import Point
+from cv_bridge              import CvBridge, CvBridgeError
+from include.connector_detector  import *
+
+
+class ConnectorDetector:
+
+    def __init__(self, thr_min, thr_max, blur=15, blob_params=None, detection_window=None):
+    
+        self.set_threshold(thr_min, thr_max)
+        self.set_blur(blur)
+        self.set_blob_params(blob_params)
+        self.detection_window = detection_window
+        
+        self._t0 = time.time()
+        
+        self.blob_point = Point()
+    
+        print (">> Publishing image to image_cable_connector")
+        self.image_pub = rospy.Publisher("/connector/image_cable_connector",Image,queue_size=1)
+        self.mask_pub = rospy.Publisher("/cable/image_mask",Image,queue_size=1)
+        print (">> Publishing position to topic position_connector")
+        self.blob_pub  = rospy.Publisher("/connector/position_connector",Point,queue_size=1)
+
+        self.bridge = CvBridge()
+        self.image_sub = rospy.Subscriber("/camera/color/image_raw",Image,self.callback)
+        print ("<< Subscribed to topic /camera/color/image_raw")
+        
+    def set_threshold(self, thr_min, thr_max):
+        self._threshold = [thr_min, thr_max]
+        
+    def set_blur(self, blur):
+        self._blur = blur
+      
+    def set_blob_params(self, blob_params):
+        self._blob_params = blob_params
+        
+    # def get_blob_relative_position(self, cv_image, keyPoint):
+        # rows = float(cv_image.shape[0])
+        # cols = float(cv_image.shape[1])
+        # # print(rows, cols)
+        # center_x    = 0.5*cols
+        # center_y    = 0.5*rows
+        # # print(center_x)
+        # x = (keyPoint.pt[0] - center_x)/(center_x)
+        # y = (keyPoint.pt[1] - center_y)/(center_y)
+        # return(x,y)
+        
+        
+    def callback(self,data):
+        #--- Assuming image is 320x240
+        try:
+            cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
+        except CvBridgeError as e:
+            print(e)
+
+        (rows,cols,channels) = cv_image.shape
+        if cols > 60 and rows > 60 :
+            #--- Detect blobs
+            keypoints, mask, contours   = blob_detect(cv_image, self._threshold[0], self._threshold[1], self._blur,
+                                            blob_params=self._blob_params, search_window=self.detection_window )
+            #--- Draw search window and blobs
+            cv_image    = blur_outside(cv_image, 10, self.detection_window)
+
+            cv_image    = draw_window(cv_image, self.detection_window, line=1)
+            cv_image    = draw_frame(cv_image)
+            
+            cv_image    = draw_keypoints(cv_image, keypoints) 
+
+
+
+            cv_image = cv2.drawContours(cv_image, contours, -1, (0, 125, 255), 2) 
+            
+            try:
+                self.image_pub.publish(self.bridge.cv2_to_imgmsg(cv_image, "bgr8"))
+                self.mask_pub.publish(self.bridge.cv2_to_imgmsg(mask, "8UC1"))
+            except CvBridgeError as e:
+                print(e)            
+
+            for i, keyPoint in enumerate(keypoints):
+                #--- Here you can implement some tracking algorithm to filter multiple detections
+                #--- We are simply getting the first result
+                x = keyPoint.pt[0]
+                y = keyPoint.pt[1]
+                s = keyPoint.size
+                print ("kp %d: s = %3d   x = %3d  y= %3d"%(i, s, x, y))
+                
+                #--- Find x and y position in camera adimensional frame
+                x, y = get_blob_relative_position(cv_image, keyPoint)
+                
+                self.blob_point.x = x
+                self.blob_point.y = y
+                self.blob_pub.publish(self.blob_point) 
+                break
+                    
+            fps = 1.0/(time.time()-self._t0)
+            self._t0 = time.time()
+            
+def main(args):
+
+    rospy.init_node('connector_detector', anonymous=True)
+    # cable
+    blue_min = (0,0,165)
+    blue_max = (255,37, 255) 
+
+    # connector 
+    blue_min = (0,0,180)
+    blue_max = (255,50, 255)
+    # blue_min = (0,0,114)
+    # blue_max = (2505,74, 238)    
+    
+    blur     = 5
+    min_size = 10
+    max_size = 40
+    
+    #--- detection window respect to camera frame in [x_min, y_min, x_max, y_max] adimensional (0 to 1)
+    x_min   = 0.15
+    x_max   = 0.95
+    y_min   = 0
+    y_max   = 1
+    
+    detection_window = [x_min, y_min, x_max, y_max]
+    
+    params = cv2.SimpleBlobDetector_Params()
+         
+    # Change thresholds
+    params.minThreshold = 0;
+    params.maxThreshold = 100;
+     
+    # Filter by Area.
+    params.filterByArea = True
+    params.minArea = 20
+    params.maxArea = 20000000
+     
+    # Filter by Circularity
+    params.filterByCircularity = True
+    params.minCircularity = 0.1
+     
+    # Filter by Convexity
+    params.filterByConvexity = True
+    params.minConvexity = 0.87
+     
+    # Filter by Inertia
+    params.filterByInertia = True
+    params.minInertiaRatio = 0.1   
+
+    ic = ConnectorDetector(blue_min, blue_max, blur, params, detection_window)
+
+    try:
+        rospy.spin()
+    except KeyboardInterrupt:
+        print("Shutting down")
+    
+    cv2.destroyAllWindows()
+
+if __name__ == '__main__':
+    main(sys.argv)

@@ -17,8 +17,8 @@ SUBSCRIBES TO:
     /camera/color/image_raw: Source image topic
     
 PUBLISHES TO:
-    /connector/image_cable_connector : image with detected connector and search window
-    /cable/image_mask : masking    
+    /cables/image : image with detected connector and search window
+    /cables/image_mask : masking    
     /connector/position_connector : connector position in adimensional values wrt. camera frame
 
 """
@@ -54,8 +54,8 @@ class ConnectorDetector:
         self.blob_point = Point()
     
         print (">> Publishing image to image_cable_connector")
-        self.image_pub = rospy.Publisher("/connector/image_cable_connector",Image,queue_size=1)
-        self.mask_pub = rospy.Publisher("/cable/image_mask",Image,queue_size=1)
+        self.image_pub = rospy.Publisher("/cables/image",Image,queue_size=1)
+        self.mask_pub = rospy.Publisher("/cables/image_mask",Image,queue_size=1)
         print (">> Publishing position to topic position_connector")
         self.blob_pub  = rospy.Publisher("/connector/position_connector",Point,queue_size=1)
 
@@ -71,43 +71,27 @@ class ConnectorDetector:
       
     def set_blob_params(self, blob_params):
         self._blob_params = blob_params
-        
-    # def get_blob_relative_position(self, cv_image, keyPoint):
-        # rows = float(cv_image.shape[0])
-        # cols = float(cv_image.shape[1])
-        # # print(rows, cols)
-        # center_x    = 0.5*cols
-        # center_y    = 0.5*rows
-        # # print(center_x)
-        # x = (keyPoint.pt[0] - center_x)/(center_x)
-        # y = (keyPoint.pt[1] - center_y)/(center_y)
-        # return(x,y)
-        
-        
+      
     def callback(self,data):
-        #--- Assuming image is 320x240
+        #--- Assuming image is 1920x1080
         try:
             cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
         except CvBridgeError as e:
             print(e)
 
         (rows,cols,channels) = cv_image.shape
+
         if cols > 60 and rows > 60 :
+
             #--- Detect blobs
-            keypoints, mask, contours   = blob_detect(cv_image, self._threshold[0], self._threshold[1], self._blur,
-                                            blob_params=self._blob_params, search_window=self.detection_window )
-            #--- Draw search window and blobs
-            cv_image    = blur_outside(cv_image, 10, self.detection_window)
-
-            cv_image    = draw_window(cv_image, self.detection_window, line=1)
-            cv_image    = draw_frame(cv_image)
+            keypoints, mask, contours   = blob_detect(cv_image, self._threshold[0], self._threshold[1], self._blur,blob_params=self._blob_params, search_window=self.detection_window )
             
-            cv_image    = draw_keypoints(cv_image, keypoints) 
-
-
-
-            cv_image = cv2.drawContours(cv_image, contours, -1, (0, 125, 255), 2) 
-            
+            cv_image    = draw_frame(cv_image) # Draw the cordinates frame   
+            cv_image    = draw_window(cv_image, self.detection_window, line=3) # Draw the windown analizy
+            cv_image    = blur_outside(cv_image, 50, self.detection_window) # Blur the outside of the windows analazing
+            cv_image    = cv2.drawContours(cv_image, contours, -1, (0, 125, 255), 2) # Draw the contours of the cable        
+            cv_image    = draw_keypoints(cv_image, keypoints) # Draw the circles of the points wich is analizyng
+             
             try:
                 self.image_pub.publish(self.bridge.cv2_to_imgmsg(cv_image, "bgr8"))
                 self.mask_pub.publish(self.bridge.cv2_to_imgmsg(mask, "8UC1"))
@@ -122,8 +106,8 @@ class ConnectorDetector:
                 s = keyPoint.size
                 print ("kp %d: s = %3d   x = %3d  y= %3d"%(i, s, x, y))
                 
-                #--- Find x and y position in camera adimensional frame
-                x, y = get_blob_relative_position(cv_image, keyPoint)
+                #--- Find x and y position in camera adimensional frame of the connector
+                x, y = get_blob_relative_position(cv_image, keyPoint) 
                 
                 self.blob_point.x = x
                 self.blob_point.y = y
@@ -136,6 +120,7 @@ class ConnectorDetector:
 def main(args):
 
     rospy.init_node('connector_detector', anonymous=True)
+
     # cable
     blue_min = (0,0,165)
     blue_max = (255,37, 255) 
@@ -143,10 +128,8 @@ def main(args):
     # connector 
     blue_min = (0,0,180)
     blue_max = (255,50, 255)
-    # blue_min = (0,0,114)
-    # blue_max = (2505,74, 238)    
     
-    blur     = 5
+    blur     = 1
     min_size = 10
     max_size = 40
     

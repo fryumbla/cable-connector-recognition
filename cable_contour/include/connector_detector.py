@@ -9,8 +9,6 @@ Library for detecting a blob based on a color range filter in HSV space
    |
    V y (rows)
 
-Author: Tiziano Fiorenzani
-
 """
 
 

@@ -42,7 +42,7 @@ from include.connector_detector  import *
 
 class ConnectorDetector:
 
-    def __init__(self, thr_min, thr_max, blur=15, blob_params=None, detection_window=None):
+    def __init__(self, thr_min, thr_max, blur=10, blob_params=None, detection_window=None):
     
         self.set_threshold(thr_min, thr_max)
         self.set_blur(blur)
@@ -52,17 +52,18 @@ class ConnectorDetector:
         self._t0 = time.time()
         
         self.blob_point = Point()
-    
+
+        # ROS communication
+        self.bridge = CvBridge()
+        self.image_sub = rospy.Subscriber("/camera/color/image_raw",Image,self.callback)
+        print ("<< Subscribed to topic /camera/color/image_raw")
+
         print (">> Publishing image to image_cable_connector")
         self.image_pub = rospy.Publisher("/cables/image",Image,queue_size=1)
         self.mask_pub = rospy.Publisher("/cables/image_mask",Image,queue_size=1)
         print (">> Publishing position to topic position_connector")
         self.blob_pub  = rospy.Publisher("/connector/position_connector",Point,queue_size=1)
 
-        self.bridge = CvBridge()
-        self.image_sub = rospy.Subscriber("/camera/color/image_raw",Image,self.callback)
-        print ("<< Subscribed to topic /camera/color/image_raw")
-        
     def set_threshold(self, thr_min, thr_max):
         self._threshold = [thr_min, thr_max]
         
@@ -82,13 +83,15 @@ class ConnectorDetector:
         (rows,cols,channels) = cv_image.shape
 
         if cols > 60 and rows > 60 :
-
-            #--- Detect blobs
-            keypoints, mask, contours   = blob_detect(cv_image, self._threshold[0], self._threshold[1], self._blur,blob_params=self._blob_params, search_window=self.detection_window )
+       
             
             cv_image    = draw_frame(cv_image) # Draw the cordinates frame   
             cv_image    = draw_window(cv_image, self.detection_window, line=3) # Draw the windown analizy
             cv_image    = blur_outside(cv_image, 50, self.detection_window) # Blur the outside of the windows analazing
+
+            #--- Detect blobs from the image
+            keypoints, mask, contours   = blob_detect(cv_image, self._threshold[0], self._threshold[1], self._blur,blob_params=self._blob_params, search_window=self.detection_window )
+
             cv_image    = cv2.drawContours(cv_image, contours, -1, (0, 125, 255), 2) # Draw the contours of the cable        
             cv_image    = draw_keypoints(cv_image, keypoints) # Draw the circles of the points wich is analizyng
              
@@ -122,12 +125,12 @@ def main(args):
     rospy.init_node('connector_detector', anonymous=True)
 
     # cable
-    blue_min = (0,0,165)
-    blue_max = (255,37, 255) 
+    hsv_min = (0,0,165)
+    hsv_max = (255,37, 255) 
 
     # connector 
-    blue_min = (0,0,180)
-    blue_max = (255,50, 255)
+    hsv_min = (0,0,180)
+    hsv_max = (255,50, 255)
     
     blur     = 1
     min_size = 10
@@ -149,8 +152,8 @@ def main(args):
      
     # Filter by Area.
     params.filterByArea = True
-    params.minArea = 20
-    params.maxArea = 20000000
+    params.minArea = 100
+    params.maxArea = 10000
      
     # Filter by Circularity
     params.filterByCircularity = True
@@ -164,7 +167,7 @@ def main(args):
     params.filterByInertia = True
     params.minInertiaRatio = 0.1   
 
-    ic = ConnectorDetector(blue_min, blue_max, blur, params, detection_window)
+    ic = ConnectorDetector(hsv_min, hsv_max, blur, params, detection_window)
 
     try:
         rospy.spin()

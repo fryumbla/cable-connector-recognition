@@ -66,8 +66,8 @@ def blob_detect(image,                  #-- The frame (cv standard)
 
     return keypoints, reversemask, contours
 
-#---------- Draw X Y frame
-#-- return(image)
+#---------- Draw X Y cordinates frame  
+#-- return(image) 
 def draw_frame(image,
                dimension=0.3,      #- dimension relative to frame size
                line=3              #- line's thickness
@@ -169,9 +169,7 @@ def apply_search_window(image, window_adim=[0.0, 0.0, 1.0, 1.0]):
     
     #--- return the mask
     return(mask)
-    
-
-    
+        
 #---------- Obtain the camera relative frame coordinate of one single keypoint
 #-- return(x,y)
 def get_blob_relative_position(image, keyPoint):
@@ -184,9 +182,7 @@ def get_blob_relative_position(image, keyPoint):
     x = (keyPoint.pt[0] - center_x)/(center_x)
     y = (keyPoint.pt[1] - center_y)/(center_y)
     return(x,y)
-        
- 
-        
+                
 #----------- TEST
 if __name__=="__main__":
 
